@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#101215">
+<title>ステッカーカメラ</title>
+<style>
+  :root{
+    --ink:#101215; --glass:rgba(255,255,255,.16); --paper:#f6f5f1;
+    --focus:#ffc53d; --alert:#ff6b5e;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  [hidden]{display:none!important}
+  html,body{margin:0;height:100%;background:var(--ink);color:var(--paper);
+    font-family:"Noto Sans JP","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
+    overscroll-behavior:none;overflow:hidden}
+
+  #stage{position:fixed;inset:0;overflow:hidden;touch-action:none;
+    user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+  #video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;background:var(--ink)}
+  #video.mirror{transform:scaleX(-1)}
+  .sticker{position:absolute;left:0;top:0;max-width:none;height:auto;
+    transform-origin:0 0;touch-action:none;user-select:none;-webkit-user-drag:none;pointer-events:auto}
+  .sticker.selected{outline:2px dashed var(--focus);outline-offset:4px}
+
+  .ui{pointer-events:auto}
+  .btn{display:flex;flex-direction:column;align-items:center;gap:6px;
+    background:none;border:0;color:var(--paper);font:inherit;font-size:12px;padding:0}
+  .btn .disc{width:52px;height:52px;border-radius:50%;background:var(--glass);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    display:grid;place-items:center}
+  .btn svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .btn:active .disc{background:rgba(255,255,255,.3)}
+  .btn.danger .disc{color:var(--alert)}
+
+  #top{position:absolute;right:0;top:0;padding:calc(env(safe-area-inset-top) + 14px) 16px 0;
+    display:flex;gap:16px;pointer-events:none}
+  #bottom{position:absolute;left:0;right:0;bottom:0;
+    padding:20px 24px calc(env(safe-area-inset-bottom) + 22px);
+    display:grid;grid-template-columns:1fr auto 1fr;align-items:center;pointer-events:none;
+    background:linear-gradient(to top,rgba(16,18,21,.55),rgba(16,18,21,0))}
+  #bottom .left{justify-self:start}
+  #bottom .right{justify-self:end}
+  #shutter{width:78px;height:78px;border-radius:50%;border:4px solid var(--paper);
+    background:none;padding:5px;display:grid;place-items:center}
+  #shutter span{display:block;width:100%;height:100%;border-radius:50%;background:var(--paper);transition:transform .1s}
+  #shutter:active span{transform:scale(.88)}
+
+  #hint{position:absolute;left:0;right:0;top:46%;text-align:center;font-size:15px;
+    padding:0 32px;pointer-events:none;text-shadow:0 1px 8px rgba(0,0,0,.6)}
+  #toast{position:absolute;left:50%;top:calc(env(safe-area-inset-top) + 18px);transform:translateX(-50%);
+    background:rgba(16,18,21,.85);padding:10px 16px;border-radius:999px;font-size:14px;
+    opacity:0;transition:opacity .2s;pointer-events:none;max-width:86vw;text-align:center}
+  #toast.on{opacity:1}
+  #flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+  #flash.go{animation:flash .25s ease-out}
+  @keyframes flash{from{opacity:.9}to{opacity:0}}
+
+  #start{position:fixed;inset:0;background:var(--ink);display:flex;flex-direction:column;
+    justify-content:center;padding:32px;gap:18px}
+  #start h1{margin:0;font-size:28px;font-weight:700;letter-spacing:.02em}
+  #start p{margin:0;line-height:1.7;max-width:30em;opacity:.8}
+  #start .go{align-self:flex-start;background:var(--focus);color:#201700;border:0;border-radius:999px;
+    font:inherit;font-weight:700;font-size:16px;padding:14px 28px}
+  #err{color:var(--alert);min-height:1.5em}
+
+  #result{position:fixed;inset:0;background:var(--ink);display:flex;flex-direction:column}
+  #result img{flex:1;min-height:0;width:100%;object-fit:contain;padding:12px}
+  #result .row{display:flex;gap:12px;justify-content:center;
+    padding:12px 16px calc(env(safe-area-inset-bottom) + 18px)}
+  #result button{font:inherit;font-size:16px;border-radius:999px;padding:13px 24px;border:1px solid var(--glass);
+    background:var(--glass);color:var(--paper)}
+  #result button.primary{background:var(--focus);border-color:var(--focus);color:#201700;font-weight:700}
+
+  @media (prefers-reduced-motion:reduce){#flash.go{animation:none}}
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <video id="video" playsinline muted autoplay></video>
+  <div id="layer"></div>
+
+  <div id="top">
+    <button class="btn ui" id="front" hidden aria-label="前面へ">
+      <span class="disc"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 4H6a2 2 0 0 0-2 2v10"/></svg></span>前面へ
+    </button>
+    <button class="btn ui danger" id="del" hidden aria-label="削除">
+      <span class="disc"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></span>削除
+    </button>
+  </div>
+
+  <div id="hint" hidden>「画像」から透過PNGを選ぶと、ここに置けます</div>
+  <div id="toast"></div>
+  <div id="flash"></div>
+
+  <div id="bottom">
+    <button class="btn ui left" id="add" aria-label="画像を追加">
+      <span class="disc"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m21 16-5-5-9 9"/></svg></span>画像
+    </button>
+    <button class="ui" id="shutter" aria-label="撮影"><span></span></button>
+    <button class="btn ui right" id="flip" aria-label="カメラ切替">
+      <span class="disc"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg></span>切替
+    </button>
+  </div>
+</div>
+
+<div id="start">
+  <h1>ステッカーカメラ</h1>
+  <p>背景透過の画像を選び、カメラ映像の上に置いて撮影できます。1本指で移動、2本指で拡大縮小と回転ができます。</p>
+  <button class="go" id="startBtn">カメラを開始</button>
+  <div id="err"></div>
+</div>
+
+<div id="result" hidden>
+  <img id="resultImg" alt="撮影した写真">
+  <div class="row">
+    <button id="closeResult">閉じる</button>
+    <button id="share" hidden>共有</button>
+    <button id="save" class="primary">保存</button>
+  </div>
+</div>
+
+<input type="file" id="file" accept="image/*" multiple hidden>
+
+<script>
+const $ = s => document.querySelector(s);
+const stage = $('#stage'), video = $('#video'), layer = $('#layer');
+let stream = null, facing = 'environment', mirrored = false;
+const stickers = [];   // { el, img, url, ar, nx, ny, nw, scale, rot }
+let selected = null;
+
+/* ---------- 補助 ---------- */
+function stageSize(){ const r = stage.getBoundingClientRect(); return { W: r.width, H: r.height }; }
+let toastTimer;
+function toast(msg){
+  const t = $('#toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 2200);
+}
+function updateHint(){ $('#hint').hidden = !(stream && stickers.length === 0); }
+
+/* ---------- カメラ ---------- */
+async function startCamera(){
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    throw new Error('insecure');
+  }
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+  });
+  video.srcObject = stream;
+  await video.play();
+  const fm = stream.getVideoTracks()[0].getSettings().facingMode;
+  mirrored = fm ? fm === 'user' : facing === 'user';
+  video.classList.toggle('mirror', mirrored);
+  updateHint();
+}
+
+$('#startBtn').addEventListener('click', async () => {
+  try {
+    await startCamera();
+    $('#start').hidden = true;
+  } catch (e){
+    const msg = e.message === 'insecure'
+      ? 'カメラを使うには、HTTPS のURL（または localhost）で開いてください。'
+      : e.name === 'NotAllowedError' ? 'カメラの使用が許可されていません。ブラウザのサイト設定で許可してください。'
+      : e.name === 'NotFoundError' ? 'カメラが見つかりません。'
+      : 'カメラを開始できませんでした（' + (e.name || e.message) + '）';
+    $('#err').textContent = msg;
+  }
+});
+
+$('#flip').addEventListener('click', async () => {
+  facing = facing === 'environment' ? 'user' : 'environment';
+  try { await startCamera(); } catch (e){ toast('カメラを切り替えられませんでした'); }
+});
+
+/* ---------- ステッカー ---------- */
+function render(st){
+  const { W, H } = stageSize();
+  const w = st.nw * W, h = w * st.ar;
+  st.el.style.width = w + 'px';
+  st.el.style.transform =
+    `translate(${st.nx * W}px,${st.ny * H}px) rotate(${st.rot}rad) scale(${st.scale}) translate(${-w / 2}px,${-h / 2}px)`;
+}
+new ResizeObserver(() => stickers.forEach(render)).observe(stage);
+
+function select(st){
+  selected = st;
+  stickers.forEach(s => s.el.classList.toggle('selected', s === st));
+  $('#del').hidden = !st;
+  $('#front').hidden = !st;
+}
+
+async function addSticker(file){
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.src = url;
+  try { await img.decode(); } catch (e){ toast('画像を読み込めませんでした'); URL.revokeObjectURL(url); return; }
+  const { W, H } = stageSize();
+  const ar = img.naturalHeight / img.naturalWidth;
+  const nw = Math.min(0.4, (0.5 * H) / (W * ar));       // 初期サイズ：幅40%以内、高さ半分以内
+  const el = img; el.className = 'sticker'; el.draggable = false;
+  layer.appendChild(el);
+  const j = (Math.random() - 0.5) * 0.08;
+  const st = { el, img, url, ar, nx: 0.5 + j, ny: 0.45 + j, nw, scale: 1, rot: 0 };
+  stickers.push(st); render(st); select(st); updateHint();
+}
+
+$('#add').addEventListener('click', () => $('#file').click());
+$('#file').addEventListener('change', async e => {
+  for (const f of e.target.files) await addSticker(f);
+  e.target.value = '';
+});
+
+$('#del').addEventListener('click', () => {
+  if (!selected) return;
+  const i = stickers.indexOf(selected);
+  selected.el.remove(); URL.revokeObjectURL(selected.url);
+  stickers.splice(i, 1); select(null); updateHint();
+});
+$('#front').addEventListener('click', () => {
+  if (!selected) return;
+  stickers.splice(stickers.indexOf(selected), 1); stickers.push(selected);
+  layer.appendChild(selected.el);
+});
+
+/* ---------- 指の操作（1本指=移動 / 2本指=拡大縮小+回転） ---------- */
+const pts = new Map();
+let drag = null, pinch = null, tap = null;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+function startDrag(st, id){
+  const p = pts.get(id);
+  drag = { st, id, x0: p.x, y0: p.y, nx0: st.nx, ny0: st.ny };
+  pinch = null;
+}
+function startPinch(){
+  const ids = [...pts.keys()].slice(0, 2);
+  const p = pts.get(ids[0]), q = pts.get(ids[1]);
+  const st = selected;
+  pinch = {
+    st, ids,
+    d0: Math.max(1, Math.hypot(q.x - p.x, q.y - p.y)),
+    a0: Math.atan2(q.y - p.y, q.x - p.x),
+    mx0: (p.x + q.x) / 2, my0: (p.y + q.y) / 2,
+    s0: st.scale, r0: st.rot, nx0: st.nx, ny0: st.ny
+  };
+  drag = null;
+}
+
+stage.addEventListener('pointerdown', e => {
+  if (e.target.closest('.ui')) return;
+  stage.setPointerCapture(e.pointerId);
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pts.size === 1){
+    const hit = e.target.closest('.sticker');
+    const st = hit ? stickers.find(s => s.el === hit) : null;
+    if (st){ select(st); startDrag(st, e.pointerId); tap = null; }
+    else { tap = { id: e.pointerId, x: e.clientX, y: e.clientY }; }
+  } else if (pts.size === 2 && selected){
+    tap = null; startPinch();
+  }
+});
+
+stage.addEventListener('pointermove', e => {
+  if (!pts.has(e.pointerId)) return;
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (tap && tap.id === e.pointerId && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 8) tap = null;
+  const { W, H } = stageSize();
+  if (pinch){
+    const p = pts.get(pinch.ids[0]), q = pts.get(pinch.ids[1]);
+    if (!p || !q) return;
+    const d = Math.hypot(q.x - p.x, q.y - p.y);
+    const a = Math.atan2(q.y - p.y, q.x - p.x);
+    const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2;
+    const st = pinch.st;
+    st.scale = clamp(pinch.s0 * d / pinch.d0, 0.1, 8);
+    st.rot = pinch.r0 + (a - pinch.a0);
+    st.nx = clamp(pinch.nx0 + (mx - pinch.mx0) / W, -0.2, 1.2);
+    st.ny = clamp(pinch.ny0 + (my - pinch.my0) / H, -0.2, 1.2);
+    render(st);
+  } else if (drag && drag.id === e.pointerId){
+    const st = drag.st;
+    st.nx = clamp(drag.nx0 + (e.clientX - drag.x0) / W, -0.2, 1.2);
+    st.ny = clamp(drag.ny0 + (e.clientY - drag.y0) / H, -0.2, 1.2);
+    render(st);
+  }
+});
+
+function endPointer(e, cancelled){
+  if (!pts.has(e.pointerId)) return;
+  pts.delete(e.pointerId);
+  if (tap && tap.id === e.pointerId){ if (!cancelled) select(null); tap = null; }
+  if (pinch && pinch.ids.includes(e.pointerId)){
+    pinch = null;
+    if (pts.size >= 1 && selected) startDrag(selected, [...pts.keys()][0]);
+  } else if (drag && drag.id === e.pointerId){
+    drag = null;
+  }
+}
+stage.addEventListener('pointerup', e => endPointer(e, false));
+stage.addEventListener('pointercancel', e => endPointer(e, true));
+stage.addEventListener('contextmenu', e => e.preventDefault());
+
+// PCでの確認用：ホイールで拡大縮小、Shift+ホイールで回転
+stage.addEventListener('wheel', e => {
+  if (!selected) return;
+  e.preventDefault();
+  if (e.shiftKey) selected.rot += e.deltaY * 0.002;
+  else selected.scale = clamp(selected.scale * Math.exp(-e.deltaY * 0.001), 0.1, 8);
+  render(selected);
+}, { passive: false });
+
+/* ---------- 撮影（見えている範囲をそのまま合成） ---------- */
+let lastBlob = null, lastName = '', resultUrl = null;
+
+function capture(){
+  if (!stream || !video.videoWidth){ toast('カメラが開始されていません'); return; }
+  const { W, H } = stageSize();
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const s = Math.max(W / vw, H / vh);                 // object-fit: cover と同じ倍率
+  const cw = Math.round(W / s), ch = Math.round(H / s);
+  const ox = (vw - cw) / 2, oy = (vh - ch) / 2;
+
+  const cv = document.createElement('canvas');
+  cv.width = cw; cv.height = ch;
+  const ctx = cv.getContext('2d');
+
+  ctx.save();
+  if (mirrored){ ctx.translate(cw, 0); ctx.scale(-1, 1); }
+  ctx.drawImage(video, -ox, -oy, vw, vh);
+  ctx.restore();
+
+  ctx.save();
+  ctx.scale(1 / s, 1 / s);                              // 以降は画面(CSS px)座標で描く
+  for (const st of stickers){
+    const w = st.nw * W, h = w * st.ar;
+    ctx.save();
+    ctx.translate(st.nx * W, st.ny * H);
+    ctx.rotate(st.rot);
+    ctx.scale(st.scale, st.scale);
+    ctx.drawImage(st.img, -w / 2, -h / 2, w, h);
+    ctx.restore();
+  }
+  ctx.restore();
+
+  $('#flash').classList.remove('go'); void $('#flash').offsetWidth; $('#flash').classList.add('go');
+
+  cv.toBlob(blob => {
+    if (!blob){ toast('保存用の画像を作れませんでした'); return; }
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    lastBlob = blob;
+    lastName = `sticker-cam-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.jpg`;
+    if (resultUrl) URL.revokeObjectURL(resultUrl);
+    resultUrl = URL.createObjectURL(blob);
+    $('#resultImg').src = resultUrl;
+    const f = new File([blob], lastName, { type: 'image/jpeg' });
+    $('#share').hidden = !(navigator.canShare && navigator.canShare({ files: [f] }));
+    $('#result').hidden = false;
+  }, 'image/jpeg', 0.92);
+}
+$('#shutter').addEventListener('click', capture);
+
+$('#closeResult').addEventListener('click', () => { $('#result').hidden = true; });
+$('#save').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.href = resultUrl; a.download = lastName; document.body.appendChild(a); a.click(); a.remove();
+  toast('保存しました');
+});
+$('#share').addEventListener('click', async () => {
+  try { await navigator.share({ files: [new File([lastBlob], lastName, { type: 'image/jpeg' })] }); }
+  catch (e){ /* キャンセル時は何もしない */ }
+});
+</script>
+</body>
+</html>
